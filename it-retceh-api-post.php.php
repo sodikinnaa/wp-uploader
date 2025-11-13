@@ -266,7 +266,7 @@ function bb_verify_api_key($request) {
         return new WP_Error(
             'missing_token',
             'Token query parameter is missing. Use "?token=<api_key>" in the URL.',
-            array('status' => 401, 'token'=>$token)
+            array('status' => 200, 'token'=>$token)
         );
     }
 
@@ -276,7 +276,7 @@ function bb_verify_api_key($request) {
         return new WP_Error(
             'invalid_token',
             'Invalid API token',
-            array('status' => 403)
+            array('status' => 200)
         );
     }
 
