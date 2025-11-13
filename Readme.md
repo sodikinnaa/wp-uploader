@@ -24,3 +24,9 @@ Plugin WordPress untuk membuat post melalui **REST API** lengkap dengan:
 
 Semua endpoint tersedia di bawah namespace:
 
+---
+
+## 📜 Lisensi
+
+Plugin ini dirilis di bawah lisensi [MIT](https://opensource.org/licen:ses/MIT). Anda bebas menggunakan, memodifikasi, dan mendistribusikannya selama tetap mencantumkan kredit.
+

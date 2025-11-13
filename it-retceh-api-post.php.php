@@ -1,13 +1,18 @@
 <?php
-/*
-Plugin Name: It Retceh API Post
-Plugin URI: 
-Description: Plugin for posting via API with complete WordPress data and author selection
-Version: 1.0
-Author: Sodikin 
-Author URI: https://sodikinnaa.github.io/
-License: GPL2
-*/
+/**
+ * Plugin Name: It Retceh API Post
+ * Plugin URI:
+ * Description: Plugin for posting via API with complete WordPress data and author selection
+ * Version: 1.0
+ * Author: Sodikin
+ * Author URI: https://sodikinnaa.github.io/
+ * License: MIT
+ * License URI: https://opensource.org/licenses/MIT
+ */
+
+define('IT_RETCEH_API_POST_VERSION', '1.0.0');
+define('IT_RETCEH_API_POST_SLUG', 'it-retceh-api-post');
+define('IT_RETCEH_API_POST_UPDATE_ENDPOINT', 'https://sodikinnaa.github.io/plugin/it-retceh-api-post.json');
 
 // Prevent direct access
 if (!defined('ABSPATH')) {
@@ -599,3 +604,347 @@ Body (multipart/form-data):
 - post_date: "2024-01-20 12:00:00"
 - post_date_gmt: "2024-01-20 12:00:00"
 */
+
+add_filter('pre_set_site_transient_update_plugins', 'bb_check_plugin_updates');
+add_filter('plugins_api', 'bb_provide_plugin_information', 10, 3);
+add_action('admin_init', 'bb_maybe_refresh_update_cache');
+
+/**
+ * Retrieve plugin baseline identifier.
+ *
+ * @return string
+ */
+function bb_get_plugin_basename()
+{
+    static $basename;
+
+    if (!$basename) {
+        $basename = plugin_basename(__FILE__);
+    }
+
+    return $basename;
+}
+
+/**
+ * Retrieve remote plugin metadata from update endpoint.
+ *
+ * @return object|null
+ */
+function bb_get_remote_plugin_metadata()
+{
+    $cache_key = 'bb_it_retceh_remote_info';
+    static $remote_cache = null;
+
+    if ($remote_cache) {
+        return $remote_cache;
+    }
+
+    $cached = get_transient($cache_key);
+
+    if ($cached) {
+        $remote_cache = $cached;
+        return $remote_cache;
+    }
+
+    $response = wp_remote_get(
+        IT_RETCEH_API_POST_UPDATE_ENDPOINT,
+        array(
+            'timeout' => 10,
+            'headers' => array(
+                'Accept' => 'application/json',
+            ),
+        )
+    );
+
+    if (is_wp_error($response)) {
+        return null;
+    }
+
+    $body = wp_remote_retrieve_body($response);
+
+    if (empty($body)) {
+        return null;
+    }
+
+    $data = json_decode($body);
+
+    if (json_last_error() !== JSON_ERROR_NONE || empty($data->version)) {
+        return null;
+    }
+
+    set_transient($cache_key, $data, HOUR_IN_SECONDS);
+
+    $remote_cache = $data;
+
+    return $remote_cache;
+}
+
+/**
+ * Check for plugin updates against remote metadata.
+ *
+ * @param stdClass $transient
+ * @return stdClass
+ */
+function bb_check_plugin_updates($transient)
+{
+    if (!is_object($transient)) {
+        $transient = new stdClass();
+    }
+
+    if (empty($transient->checked)) {
+        return $transient;
+    }
+
+    $remote = bb_get_remote_plugin_metadata();
+
+    if (!$remote) {
+        return $transient;
+    }
+
+    $plugin_basename = bb_get_plugin_basename();
+    $current_version = isset($transient->checked[$plugin_basename])
+        ? $transient->checked[$plugin_basename]
+        : IT_RETCEH_API_POST_VERSION;
+
+    if (version_compare($remote->version, $current_version, '<=')) {
+        return $transient;
+    }
+
+    $transient->response[$plugin_basename] = (object) array(
+        'slug' => IT_RETCEH_API_POST_SLUG,
+        'plugin' => $plugin_basename,
+        'new_version' => $remote->version,
+        'package' => isset($remote->download_url) ? $remote->download_url : '',
+        'url' => isset($remote->homepage) ? $remote->homepage : '',
+        'tested' => isset($remote->tested) ? $remote->tested : '',
+        'requires' => isset($remote->requires) ? $remote->requires : '',
+    );
+
+    return $transient;
+}
+
+/**
+ * Provide plugin information for WordPress update details modal.
+ *
+ * @param false|object $result
+ * @param string $action
+ * @param object $args
+ * @return false|object
+ */
+function bb_provide_plugin_information($result, $action, $args)
+{
+    if ('plugin_information' !== $action) {
+        return $result;
+    }
+
+    if (!isset($args->slug) || IT_RETCEH_API_POST_SLUG !== $args->slug) {
+        return $result;
+    }
+
+    $remote = bb_get_remote_plugin_metadata();
+
+    if (!$remote) {
+        return $result;
+    }
+
+    $info = (object) array(
+        'name' => isset($remote->name) ? $remote->name : 'It Retceh API Post',
+        'slug' => IT_RETCEH_API_POST_SLUG,
+        'version' => $remote->version,
+        'author' => isset($remote->author) ? $remote->author : '',
+        'homepage' => isset($remote->homepage) ? $remote->homepage : '',
+        'download_link' => isset($remote->download_url) ? $remote->download_url : '',
+        'requires' => isset($remote->requires) ? $remote->requires : '',
+        'tested' => isset($remote->tested) ? $remote->tested : '',
+        'sections' => isset($remote->sections) ? (array) $remote->sections : array(),
+    );
+
+    return $info;
+}
+
+/**
+ * Refresh cached update metadata when user forces an update check.
+ *
+ * @return void
+ */
+function bb_maybe_refresh_update_cache()
+{
+    if (!is_admin()) {
+        return;
+    }
+
+    if (!current_user_can('update_plugins')) {
+        return;
+    }
+
+    $force_check = filter_input(INPUT_GET, 'force-check', FILTER_SANITIZE_SPECIAL_CHARS);
+
+    if (empty($force_check)) {
+        return;
+    }
+
+    delete_transient('bb_it_retceh_remote_info');
+}
+
+/**
+ * Determine whether a newer plugin version is available remotely.
+ *
+ * @return object|null
+ */
+function bb_get_available_update()
+{
+    $remote = bb_get_remote_plugin_metadata();
+
+    if (!$remote) {
+        return null;
+    }
+
+    if (!isset($remote->version)) {
+        return null;
+    }
+
+    if (version_compare($remote->version, IT_RETCEH_API_POST_VERSION, '>')) {
+        return $remote;
+    }
+
+    return null;
+}
+
+add_action('admin_enqueue_scripts', 'bb_enqueue_update_notice_assets');
+
+/**
+ * Enqueue assets required for update notification modal.
+ *
+ * @return void
+ */
+function bb_enqueue_update_notice_assets()
+{
+    if (!is_admin()) {
+        return;
+    }
+
+    if (!current_user_can('update_plugins')) {
+        return;
+    }
+
+    $remote = bb_get_available_update();
+
+    if (!$remote) {
+        return;
+    }
+
+    wp_enqueue_style('thickbox');
+    wp_enqueue_script('thickbox');
+}
+
+add_action('admin_notices', 'bb_render_update_notice');
+
+/**
+ * Render admin notice when update is available.
+ *
+ * @return void
+ */
+function bb_render_update_notice()
+{
+    if (!current_user_can('update_plugins')) {
+        return;
+    }
+
+    $remote = bb_get_available_update();
+
+    if (!$remote) {
+        return;
+    }
+
+    $notice_id = 'bb-it-retceh-update-notice';
+    $download_url = isset($remote->download_url) ? esc_url($remote->download_url) : '';
+    $modal_link = esc_url('#TB_inline?width=460&height=400&inlineId=bb-it-retceh-update-modal');
+
+    ?>
+    <div class="notice notice-warning is-dismissible" id="<?php echo esc_attr($notice_id); ?>">
+        <p>
+            <?php
+            printf(
+                /* translators: 1: plugin name, 2: remote version */
+                esc_html__('An update is available for %1$s (version %2$s).', 'it-retceh-api-post'),
+                '<strong>It Retceh API Post</strong>',
+                esc_html($remote->version)
+            );
+            ?>
+        </p>
+        <p>
+            <a href="<?php echo $modal_link; ?>" class="button button-primary thickbox">
+                <?php esc_html_e('View update details & download', 'it-retceh-api-post'); ?>
+            </a>
+            <?php if ($download_url) : ?>
+                <a href="<?php echo $download_url; ?>" class="button button-secondary" target="_blank" rel="noopener noreferrer">
+                    <?php esc_html_e('Download update directly', 'it-retceh-api-post'); ?>
+                </a>
+            <?php endif; ?>
+        </p>
+    </div>
+    <?php
+}
+
+add_action('admin_footer', 'bb_render_update_modal_markup');
+
+/**
+ * Render hidden markup for update details modal.
+ *
+ * @return void
+ */
+function bb_render_update_modal_markup()
+{
+    if (!current_user_can('update_plugins')) {
+        return;
+    }
+
+    $remote = bb_get_available_update();
+
+    if (!$remote) {
+        return;
+    }
+
+    $download_url = isset($remote->download_url) ? esc_url($remote->download_url) : '';
+    $homepage = isset($remote->homepage) ? esc_url($remote->homepage) : '';
+    $changelog = '';
+
+    if (isset($remote->sections) && isset($remote->sections->changelog)) {
+        $changelog = wp_kses_post(nl2br($remote->sections->changelog));
+    }
+    ?>
+    <div id="bb-it-retceh-update-modal" style="display:none;">
+        <h2><?php esc_html_e('It Retceh API Post Update Available', 'it-retceh-api-post'); ?></h2>
+        <p>
+            <?php
+            printf(
+                /* translators: 1: remote version */
+                esc_html__('A new version (%s) is available. Review the changes below and download the package to update manually.', 'it-retceh-api-post'),
+                esc_html($remote->version)
+            );
+            ?>
+        </p>
+
+        <?php if (!empty($changelog)) : ?>
+            <h3><?php esc_html_e('Changelog', 'it-retceh-api-post'); ?></h3>
+            <div class="bb-update-changelog">
+                <?php echo $changelog; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
+            </div>
+        <?php endif; ?>
+
+        <p>
+            <?php if ($download_url) : ?>
+                <a class="button button-primary" href="<?php echo $download_url; ?>" target="_blank" rel="noopener noreferrer">
+                    <?php esc_html_e('Download Update', 'it-retceh-api-post'); ?>
+                </a>
+            <?php endif; ?>
+
+            <?php if ($homepage) : ?>
+                <a class="button" href="<?php echo $homepage; ?>" target="_blank" rel="noopener noreferrer">
+                    <?php esc_html_e('Visit Plugin Homepage', 'it-retceh-api-post'); ?>
+                </a>
+            <?php endif; ?>
+        </p>
+    </div>
+    <?php
+}
